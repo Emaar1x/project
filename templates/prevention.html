@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prevention Dashboard - WiFi IDPS</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🛡️ Prevention Dashboard</h1>
+            <div class="header-right">
+                <nav>
+                    <a href="/" class="nav-link">Dashboard</a>
+                    <a href="/testing" class="nav-link">Testing Lab</a>
+                    <a href="/prevention" class="nav-link active">Prevention</a>
+                </nav>
+                <div class="status-indicator">
+                    <span id="prevention-status-dot" class="dot"></span>
+                    <span id="prevention-status-text">Checking...</span>
+                </div>
+            </div>
+        </header>
+
+        <div class="prevention-controls">
+            <div class="prevention-toggle">
+                <h2>Prevention System</h2>
+                <button id="toggle-prevention-btn" class="btn btn-secondary">Enable Prevention</button>
+                <div id="prevention-info" class="info-box">
+                    <p><strong>Status:</strong> <span id="prevention-status">Disabled</span></p>
+                    <p><strong>Auto-Block:</strong> <span id="auto-block-status">Enabled</span></p>
+                    <p><strong>Prevention Adapter:</strong> <span id="prevention-adapter-name">Not assigned</span></p>
+                </div>
+            </div>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>Total Blocks</h3>
+                <p id="total-blocks">0</p>
+            </div>
+            <div class="stat-card">
+                <h3>Total Logs</h3>
+                <p id="total-logs">0</p>
+            </div>
+            <div class="stat-card">
+                <h3>Active Blocks</h3>
+                <p id="active-blocks">0</p>
+            </div>
+            <div class="stat-card">
+                <h3>Block Duration</h3>
+                <p id="block-duration">5 min</p>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="blocked-devices-panel">
+                <h2>🚫 Currently Blocked Devices</h2>
+                <div id="blocked-devices-container">
+                    <p class="no-data">No devices currently blocked...</p>
+                </div>
+            </div>
+
+            <div class="prevention-logs-panel">
+                <h2>📋 Prevention Action Logs</h2>
+                <div id="prevention-logs-container">
+                    <p class="no-data">No prevention actions yet...</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="prevention-charts">
+            <h2>📊 Prevention Statistics</h2>
+            <div class="charts-grid">
+                <div class="chart-container">
+                    <canvas id="prevention-timeline-chart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let preventionChart = null;
+        let preventionEnabled = false;
+
+        // Initialize chart
+        function initChart() {
+            const ctx = document.getElementById('prevention-timeline-chart').getContext('2d');
+            preventionChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Blocks per Hour',
+                        data: [],
+                        borderColor: 'rgba(255, 99, 132, 1)',
+                        backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                        tension: 0.4
+                    }, {
+                        label: 'Logs per Hour',
+                        data: [],
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
+        // Load prevention status
+        async function loadPreventionStatus() {
+            try {
+                const response = await fetch('/api/prevention/status');
+                const data = await response.json();
+                
+                preventionEnabled = data.enabled || false;
+                document.getElementById('prevention-status').textContent = 
+                    preventionEnabled ? 'Enabled' : 'Disabled';
+                document.getElementById('auto-block-status').textContent = 
+                    data.auto_block ? 'Enabled' : 'Disabled';
+                document.getElementById('prevention-adapter-name').textContent = 
+                    data.prevention_interface || 'Not assigned';
+                
+                const statusDot = document.getElementById('prevention-status-dot');
+                const statusText = document.getElementById('prevention-status-text');
+                if (preventionEnabled) {
+                    statusDot.className = 'dot active';
+                    statusText.textContent = 'Prevention Active';
+                } else {
+                    statusDot.className = 'dot inactive';
+                    statusText.textContent = 'Prevention Inactive';
+                }
+                
+                document.getElementById('toggle-prevention-btn').textContent = 
+                    preventionEnabled ? 'Disable Prevention' : 'Enable Prevention';
+                document.getElementById('toggle-prevention-btn').className = 
+                    preventionEnabled ? 'btn btn-danger' : 'btn btn-success';
+                
+                // Update stats
+                document.getElementById('total-blocks').textContent = data.total_blocks || 0;
+                document.getElementById('total-logs').textContent = data.total_logs || 0;
+                document.getElementById('active-blocks').textContent = data.active_blocks || 0;
+                document.getElementById('block-duration').textContent = 
+                    Math.floor((data.block_duration || 300) / 60) + ' min';
+                
+                // Update blocked devices
+                displayBlockedDevices(data.blocked_macs || {});
+            } catch (error) {
+                console.error('Error loading prevention status:', error);
+            }
+        }
+
+        // Display blocked devices
+        function displayBlockedDevices(blockedMacs) {
+            const container = document.getElementById('blocked-devices-container');
+            
+            if (!blockedMacs || Object.keys(blockedMacs).length === 0) {
+                container.innerHTML = '<p class="no-data">No devices currently blocked...</p>';
+                return;
+            }
+            
+            container.innerHTML = Object.entries(blockedMacs).map(([mac, unblockTime]) => {
+                const unblockDate = new Date(unblockTime);
+                const timeRemaining = Math.max(0, Math.floor((unblockDate - new Date()) / 1000 / 60));
+                
+                return `
+                    <div class="blocked-device-item">
+                        <div class="device-mac">${mac}</div>
+                        <div class="device-info">
+                            <span>Blocked until: ${unblockDate.toLocaleString()}</span>
+                            <span>Time remaining: ${timeRemaining} minutes</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Load prevention logs
+        async function loadPreventionLogs() {
+            try {
+                const response = await fetch('/api/prevention/logs');
+                const logs = await response.json();
+                
+                const container = document.getElementById('prevention-logs-container');
+                
+                if (!logs || logs.length === 0) {
+                    container.innerHTML = '<p class="no-data">No prevention actions yet...</p>';
+                    return;
+                }
+                
+                container.innerHTML = logs.map(log => {
+                    const time = new Date(log.timestamp).toLocaleString();
+                    const actionType = log.action_type === 'blocked' ? '🚫 Blocked' : '📝 Logged';
+                    const severity = log.action_type === 'blocked' ? 'high' : 'medium';
+                    
+                    return `
+                        <div class="prevention-log-item severity-${severity}">
+                            <div class="log-header">
+                                <span class="log-action">${actionType}</span>
+                                <span class="log-time">${time}</span>
+                            </div>
+                            <div class="log-details">
+                                <strong>Attacker:</strong> ${log.attacker_mac || 'Unknown'}<br>
+                                <strong>Attack Type:</strong> ${log.attack_type || 'Unknown'}<br>
+                                ${log.details ? `<strong>Details:</strong> ${log.details}<br>` : ''}
+                                ${log.block_until ? `<strong>Blocked Until:</strong> ${new Date(log.block_until).toLocaleString()}` : ''}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('Error loading prevention logs:', error);
+            }
+        }
+
+        // Toggle prevention
+        document.getElementById('toggle-prevention-btn').addEventListener('click', async () => {
+            const endpoint = preventionEnabled ? '/api/prevention/disable' : '/api/prevention/enable';
+            
+            try {
+                const response = await fetch(endpoint, { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.status === 'enabled' || data.status === 'disabled') {
+                    loadPreventionStatus();
+                }
+            } catch (error) {
+                console.error('Error toggling prevention:', error);
+                alert('Error: ' + error.message);
+            }
+        });
+
+        // WebSocket updates
+        socket.on('connect', () => {
+            console.log('Connected to prevention dashboard');
+        });
+
+        socket.on('prevention_update', (data) => {
+            console.log('Prevention update received:', data);
+            if (data.status) {
+                loadPreventionStatus();
+            }
+            if (data.logs) {
+                loadPreventionLogs();
+            }
+        });
+
+        // Initial load
+        initChart();
+        loadPreventionStatus();
+        loadPreventionLogs();
+        
+        // Auto-refresh
+        setInterval(() => {
+            loadPreventionStatus();
+            loadPreventionLogs();
+        }, 3000);
+    </script>
+</body>
+</html>

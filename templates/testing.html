@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WiFi IDPS Testing Lab</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🧪 WiFi IDPS Testing Lab</h1>
+            <nav>
+                <a href="/" class="nav-link">Dashboard</a>
+                <a href="/testing" class="nav-link active">Testing Lab</a>
+                <a href="/prevention" class="nav-link">Prevention</a>
+            </nav>
+        </header>
+
+        <div class="adapter-info">
+            <h2>Adapter Information</h2>
+            <div class="adapter-status-display">
+                <p><strong>Monitor Adapter:</strong> <span id="testing-monitor-adapter">Not assigned</span></p>
+                <p><strong>Attack Adapter:</strong> <span id="testing-attack-adapter">Not assigned</span></p>
+                <p class="info-note">💡 Assign adapters from the Dashboard page</p>
+            </div>
+        </div>
+
+        <div class="scan-section">
+            <h2>Network Scanner</h2>
+            <div class="scan-controls">
+                <button id="start-scan-btn" class="btn btn-success">Start Scan</button>
+                <button id="stop-scan-btn" class="btn btn-danger" disabled>Stop Scan</button>
+                <span id="scan-status" class="status-badge">Idle</span>
+            </div>
+            <div id="scan-results-container">
+                <table id="networks-table" class="networks-table">
+                    <thead>
+                        <tr>
+                            <th>Select</th>
+                            <th>SSID</th>
+                            <th>BSSID</th>
+                            <th>Channel</th>
+                            <th>Encryption</th>
+                            <th>RSSI</th>
+                        </tr>
+                    </thead>
+                    <tbody id="networks-tbody">
+                        <tr><td colspan="6" class="no-data">No networks found. Start scan to discover networks.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="attack-section">
+            <h2>Attack Testing (LAB ONLY)</h2>
+            <div class="selected-target">
+                <h3>Selected Target</h3>
+                <div id="target-info">
+                    <p><strong>SSID:</strong> <span id="target-ssid">-</span></p>
+                    <p><strong>BSSID:</strong> <span id="target-bssid">-</span></p>
+                    <p><strong>Channel:</strong> <span id="target-channel">-</span></p>
+                </div>
+            </div>
+
+            <div class="attack-controls">
+                <div class="attack-type-select">
+                    <label>Attack Type:</label>
+                    <select id="attack-type-select" class="attack-select">
+                        <option value="">Select attack type...</option>
+                        <option value="deauth">Deauthentication Attack</option>
+                        <option value="handshake">Handshake Capture</option>
+                        <option value="rogue_ap">Rogue Access Point</option>
+                    </select>
+                </div>
+                <div class="attack-buttons">
+                    <button id="start-attack-btn" class="btn btn-danger" disabled>Start Attack</button>
+                    <button id="stop-attack-btn" class="btn btn-secondary" disabled>Stop Attack</button>
+                    <button id="stop-all-attacks-btn" class="btn btn-warning">Stop All Attacks</button>
+                </div>
+            </div>
+
+            <div id="attack-status" class="status-panel">
+                <h3>Attack Status</h3>
+                <div id="attack-status-info">
+                    <p>Status: <span id="attack-status-text">Idle</span></p>
+                    <p>Detection: <span id="detection-status">-</span></p>
+                </div>
+            </div>
+        </div>
+
+        <div class="attack-logs-section">
+            <h2>Attack Logs</h2>
+            <p class="info-note">💡 For detailed attack logs, visit the <a href="/">Dashboard</a></p>
+            <div id="attack-logs-container">
+                <table class="logs-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Attack Type</th>
+                            <th>Target</th>
+                            <th>Adapter</th>
+                            <th>Detected</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logs-tbody">
+                        <tr><td colspan="5" class="no-data">No attack logs yet</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='scanner.js') }}"></script>
+    <script src="{{ url_for('static', filename='testing.js') }}"></script>
+</body>
+</html>
+

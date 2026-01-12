@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WiFi IDPS Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🛡️ WiFi Intrusion Detection & Prevention System</h1>
+            <div class="header-right">
+                <nav>
+                    <a href="/" class="nav-link active">Dashboard</a>
+                    <a href="/testing" class="nav-link">Testing Lab</a>
+                    <a href="/prevention" class="nav-link">Prevention</a>
+                </nav>
+                <div class="status-indicator">
+                    <span id="status-dot" class="dot"></span>
+                    <span id="status-text">Initializing...</span>
+                </div>
+            </div>
+        </header>
+
+        <div class="adapter-assignment-section">
+            <h2>📡 Adapter Assignment</h2>
+            <div class="adapter-assignment-controls">
+                <div class="adapter-select-group">
+                    <label for="monitor-adapter-select">Monitor Adapter:</label>
+                    <select id="monitor-adapter-select" class="adapter-select">
+                        <option value="">Select Monitor Adapter...</option>
+                    </select>
+                    <span id="monitor-adapter-badge" class="adapter-badge hidden"></span>
+                    <button id="assign-monitor-btn" class="btn btn-primary btn-small">Assign Monitor</button>
+                </div>
+                <div class="adapter-select-group">
+                    <label for="attack-adapter-select">Attack Adapter:</label>
+                    <select id="attack-adapter-select" class="adapter-select">
+                        <option value="">Select Attack Adapter...</option>
+                    </select>
+                    <span id="attack-adapter-badge" class="adapter-badge hidden"></span>
+                    <button id="assign-attack-btn" class="btn btn-primary btn-small">Assign Attack</button>
+                </div>
+                <div class="adapter-select-group">
+                    <label for="prevention-adapter-select">Prevention Adapter:</label>
+                    <select id="prevention-adapter-select" class="adapter-select">
+                        <option value="">Select Prevention Adapter...</option>
+                    </select>
+                    <span id="prevention-adapter-badge" class="adapter-badge hidden"></span>
+                    <button id="assign-prevention-btn" class="btn btn-primary btn-small">Assign Prevention</button>
+                </div>
+                <div class="adapter-select-group">
+                    <button id="deassign-all-btn" class="btn btn-secondary btn-small">Deassign All</button>
+                </div>
+            </div>
+            <div id="assignment-status" class="status-message"></div>
+        </div>
+
+        <div class="adapter-controls">
+            <div class="adapter-status">
+                <h3>Monitoring Status</h3>
+                <div id="adapter-status-info">
+                    <p>Mode: <span id="adapter-mode">Unknown</span> <span id="mode-badge" class="status-badge-small"></span></p>
+                    <p>Interface: <span id="adapter-interface">-</span></p>
+                    <p>Monitor Adapter: <span id="assigned-monitor">-</span></p>
+                    <p>Attack Adapter: <span id="assigned-attack">-</span></p>
+                </div>
+            </div>
+            <div class="controls">
+                <button id="start-monitoring-btn" class="btn btn-success">Start Monitoring</button>
+                <button id="stop-monitoring-btn" class="btn btn-danger" disabled>Stop Monitoring</button>
+                <button id="prevention-btn" class="btn btn-secondary">Enable Prevention</button>
+                <button id="stop-all-attacks-btn" class="btn btn-warning">Stop All Attacks</button>
+                <button id="reset-btn" class="btn btn-danger">Reset System</button>
+                <button id="refresh-btn" class="btn btn-primary">Refresh</button>
+            </div>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>Total Packets</h3>
+                <p id="total-packets">0</p>
+            </div>
+            <div class="stat-card">
+                <h3>Deauth Attacks</h3>
+                <p id="deauth-count">0</p>
+            </div>
+            <div class="stat-card">
+                <h3>Rogue APs</h3>
+                <p id="rogue-ap-count">0</p>
+            </div>
+            <div class="stat-card">
+                <h3>Handshake Captures</h3>
+                <p id="eapol-count">0</p>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="alerts-panel">
+                <h2>🚨 Live Alerts</h2>
+                <div id="alerts-container">
+                    <p class="no-data">No alerts yet...</p>
+                </div>
+            </div>
+
+            <div class="charts-panel">
+                <h2>📊 Attack Statistics</h2>
+                <div class="charts-grid">
+                    <div class="chart-container">
+                        <canvas id="attack-chart"></canvas>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="timeline-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="devices-panel">
+            <h2>📡 Detected Devices</h2>
+            <div id="devices-container">
+                <p class="no-data">No devices detected yet...</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='charts.js') }}"></script>
+    <script>
+        // WebSocket connection
+        const socket = io();
+        
+        let attackChart = null;
+        let timelineChart = null;
+        let preventionEnabled = false;
+
+        // Initialize charts
+        function initCharts() {
+            const attackCtx = document.getElementById('attack-chart').getContext('2d');
+            attackChart = new Chart(attackCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Deauth Attacks', 'Rogue APs', 'Handshake Captures'],
+                    datasets: [{
+                        data: [0, 0, 0],
+                        backgroundColor: [
+                            'rgba(255, 99, 132, 0.8)',
+                            'rgba(54, 162, 235, 0.8)',
+                            'rgba(255, 206, 86, 0.8)'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        }
+                    }
+                }
+            });
+
+            const timelineCtx = document.getElementById('timeline-chart').getContext('2d');
+            timelineChart = new Chart(timelineCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Deauth Packets',
+                        data: [],
+                        borderColor: 'rgba(255, 99, 132, 1)',
+                        backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                        tension: 0.4
+                    }, {
+                        label: 'EAPOL Packets',
+                        data: [],
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                        tension: 0.4
+                    }, {
+                        label: 'Rogue APs',
+                        data: [],
+                        borderColor: 'rgba(255, 206, 86, 1)',
+                        backgroundColor: 'rgba(255, 206, 86, 0.2)',
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
+        // Update status indicator
+        function updateStatus(status, adapterStatus) {
+            const dot = document.getElementById('status-dot');
+            const text = document.getElementById('status-text');
+            
+            if (status && status.running) {
+                dot.className = 'dot active';
+                text.textContent = `Monitoring: ${status.interface || 'N/A'}`;
+                document.getElementById('start-monitoring-btn').disabled = true;
+                document.getElementById('stop-monitoring-btn').disabled = false;
+            } else {
+                dot.className = 'dot inactive';
+                text.textContent = 'Stopped';
+                document.getElementById('start-monitoring-btn').disabled = false;
+                document.getElementById('stop-monitoring-btn').disabled = true;
+            }
+            
+            // Update adapter status
+            if (adapterStatus) {
+                const currentIf = adapterStatus.current_interface;
+                if (currentIf) {
+                    document.getElementById('adapter-mode').textContent = 
+                        currentIf.monitor_mode ? 'Monitor Mode' : 'Managed Mode';
+                    document.getElementById('adapter-interface').textContent = 
+                        currentIf.interface || '-';
+                } else {
+                    document.getElementById('adapter-mode').textContent = 'Unknown';
+                    document.getElementById('adapter-interface').textContent = '-';
+                }
+            }
+        }
+
+        // Update statistics
+        function updateStats(data) {
+            console.log('📊 updateStats called with:', {
+                hasSummary: !!data.summary,
+                hasStatus: !!data.status,
+                hasStatistics: !!data.statistics,
+                summary: data.summary,
+                packetCount: data.status?.packet_count
+            });
+            
+            // Update summary counts
+            if (data.summary && typeof data.summary === 'object') {
+                const deauthCount = data.summary['Deauthentication Attack'] || data.summary['Deauthentication'] || 0;
+                const rogueCount = data.summary['Rogue Access Point'] || data.summary['Rogue AP'] || 0;
+                const eapolCount = data.summary['Handshake Capture'] || data.summary['EAPOL'] || 0;
+                
+                const deauthEl = document.getElementById('deauth-count');
+                const rogueEl = document.getElementById('rogue-ap-count');
+                const eapolEl = document.getElementById('eapol-count');
+                
+                if (deauthEl) deauthEl.textContent = deauthCount;
+                if (rogueEl) rogueEl.textContent = rogueCount;
+                if (eapolEl) eapolEl.textContent = eapolCount;
+                
+                console.log(`✅ Updated stats: Deauth=${deauthCount}, Rogue=${rogueCount}, EAPOL=${eapolCount}`);
+            } else {
+                console.warn('⚠️ No summary data in update');
+            }
+            
+            // Update packet count
+            if (data.status && typeof data.status === 'object' && data.status.packet_count !== undefined) {
+                const totalPacketsEl = document.getElementById('total-packets');
+                if (totalPacketsEl) {
+                    totalPacketsEl.textContent = data.status.packet_count || 0;
+                }
+            }
+
+            // Update attack chart (pie chart)
+            if (attackChart) {
+                const deauthVal = data.summary?.['Deauthentication Attack'] || data.summary?.['Deauthentication'] || 0;
+                const rogueVal = data.summary?.['Rogue Access Point'] || data.summary?.['Rogue AP'] || 0;
+                const eapolVal = data.summary?.['Handshake Capture'] || data.summary?.['EAPOL'] || 0;
+                
+                attackChart.data.datasets[0].data = [deauthVal, rogueVal, eapolVal];
+                attackChart.update('none'); // 'none' mode for smoother updates
+                console.log(`📈 Pie chart updated: [${deauthVal}, ${rogueVal}, ${eapolVal}]`);
+            }
+
+            // Update timeline chart
+            if (timelineChart && data.statistics && Array.isArray(data.statistics) && data.statistics.length > 0) {
+                const stats = data.statistics.slice(-20); // Last 20 data points
+                timelineChart.data.labels = stats.map(s => {
+                    try {
+                        const date = new Date(s.timestamp);
+                        return date.toLocaleTimeString();
+                    } catch (e) {
+                        return s.timestamp || '';
+                    }
+                });
+                timelineChart.data.datasets[0].data = stats.map(s => s.deauth_count || 0);
+                timelineChart.data.datasets[1].data = stats.map(s => s.eapol_count || 0);
+                timelineChart.data.datasets[2].data = stats.map(s => s.rogue_ap_count || 0);
+                timelineChart.update('none');
+                console.log(`📈 Timeline chart updated with ${stats.length} data points`);
+            } else if (timelineChart) {
+                console.log('⚠️ No statistics data for timeline chart');
+            }
+        }
+
+        // Display alerts
+        function displayAlerts(alerts) {
+            console.log('displayAlerts called with:', alerts);
+            const container = document.getElementById('alerts-container');
+            
+            if (!alerts || alerts.length === 0) {
+                container.innerHTML = '<p class="no-data">No alerts yet...</p>';
+                return;
+            }
+
+            console.log(`Displaying ${alerts.length} alerts`);
+            
+            container.innerHTML = alerts.map(alert => {
+                const severity = alert.severity || 'medium';
+                const time = new Date(alert.timestamp).toLocaleString();
+                
+                return `
+                    <div class="alert-item severity-${severity}">
+                        <div class="alert-header">
+                            <span class="alert-type">${alert.alert_type}</span>
+                            <span class="alert-time">${time}</span>
+                        </div>
+                        <div class="alert-details">
+                            ${alert.attacker_mac ? `<strong>Attacker:</strong> ${alert.attacker_mac}<br>` : ''}
+                            ${alert.victim_mac ? `<strong>Victim:</strong> ${alert.victim_mac}<br>` : ''}
+                            ${alert.ssid ? `<strong>SSID:</strong> ${alert.ssid}<br>` : ''}
+                            ${alert.signal_strength ? `<strong>Signal:</strong> ${alert.signal_strength} dBm<br>` : ''}
+                            ${alert.details ? `<strong>Details:</strong> ${alert.details}` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Load devices
+        async function loadDevices() {
+            try {
+                const response = await fetch('/api/devices');
+                const devices = await response.json();
+                const container = document.getElementById('devices-container');
+                
+                if (!devices || devices.length === 0) {
+                    container.innerHTML = '<p class="no-data">No devices detected yet...</p>';
+                    return;
+                }
+
+                container.innerHTML = devices.map(device => {
+                    const lastSeen = new Date(device.last_seen).toLocaleString();
+                    return `
+                        <div class="device-item">
+                            <div class="device-mac">${device.mac_address}</div>
+                            <div class="device-info">
+                                <span>Last seen: ${lastSeen}</span>
+                                ${device.signal_strength ? `<span>Signal: ${device.signal_strength} dBm</span>` : ''}
+                                <span>Packets: ${device.packet_count || 0}</span>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('Error loading devices:', error);
+            }
+        }
+
+        // Load adapters for assignment
+        async function loadAdapters() {
+            try {
+                const response = await fetch('/api/adapters');
+                const data = await response.json();
+                
+                const monitorSelect = document.getElementById('monitor-adapter-select');
+                const attackSelect = document.getElementById('attack-adapter-select');
+                const preventionSelect = document.getElementById('prevention-adapter-select');
+                const monitorBadge = document.getElementById('monitor-adapter-badge');
+                const attackBadge = document.getElementById('attack-adapter-badge');
+                const preventionBadge = document.getElementById('prevention-adapter-badge');
+                
+                // Clear existing options
+                monitorSelect.innerHTML = '<option value="">Select Monitor Adapter...</option>';
+                attackSelect.innerHTML = '<option value="">Select Attack Adapter...</option>';
+                preventionSelect.innerHTML = '<option value="">Select Prevention Adapter...</option>';
+                
+                const monitorAdapter = data.monitor_adapter;
+                const attackAdapter = data.attack_adapter;
+                const preventionAdapter = data.prevention_adapter;
+                
+                // Populate dropdowns with available interfaces
+                if (data.interfaces && data.interfaces.length > 0) {
+                    data.interfaces.forEach(iface => {
+                        const ifaceName = typeof iface === 'string' ? iface : iface.name;
+                        const displayName = typeof iface === 'string' ? iface : iface.display;
+                        
+                        // Monitor adapter dropdown - exclude attack and prevention adapters
+                        if (ifaceName !== attackAdapter && ifaceName !== preventionAdapter) {
+                            const monitorOption = document.createElement('option');
+                            monitorOption.value = ifaceName;
+                            monitorOption.textContent = displayName;
+                            if (monitorAdapter === ifaceName) {
+                                monitorOption.selected = true;
+                                monitorBadge.textContent = '✓ Assigned';
+                                monitorBadge.className = 'adapter-badge assigned';
+                            }
+                            monitorSelect.appendChild(monitorOption);
+                        }
+                        
+                        // Attack adapter dropdown - exclude monitor and prevention adapters
+                        if (ifaceName !== monitorAdapter && ifaceName !== preventionAdapter) {
+                            const attackOption = document.createElement('option');
+                            attackOption.value = ifaceName;
+                            attackOption.textContent = displayName;
+                            if (attackAdapter === ifaceName) {
+                                attackOption.selected = true;
+                                attackBadge.textContent = '✓ Assigned';
+                                attackBadge.className = 'adapter-badge assigned';
+                            }
+                            attackSelect.appendChild(attackOption);
+                        }
+                        
+                        // Prevention adapter dropdown - exclude monitor and attack adapters
+                        if (ifaceName !== monitorAdapter && ifaceName !== attackAdapter) {
+                            const preventionOption = document.createElement('option');
+                            preventionOption.value = ifaceName;
+                            preventionOption.textContent = displayName;
+                            if (preventionAdapter === ifaceName) {
+                                preventionOption.selected = true;
+                                preventionBadge.textContent = '✓ Assigned';
+                                preventionBadge.className = 'adapter-badge assigned';
+                            }
+                            preventionSelect.appendChild(preventionOption);
+                        }
+                    });
+                }
+                
+                // Update status display
+                document.getElementById('assigned-monitor').textContent = monitorAdapter || '-';
+                document.getElementById('assigned-attack').textContent = attackAdapter || '-';
+                document.getElementById('assigned-prevention').textContent = preventionAdapter || '-';
+                
+            } catch (error) {
+                console.error('Error loading adapters:', error);
+            }
+        }
+        
+        // Assign monitor adapter
+        async function assignMonitorAdapter() {
+            const monitorAdapter = document.getElementById('monitor-adapter-select').value;
+            const currentAttack = document.getElementById('attack-adapter-select').value;
+            const currentPrevention = document.getElementById('prevention-adapter-select').value;
+            
+            if (!monitorAdapter) {
+                showMessage('assignment-status', 'Please select a monitor adapter', 'error');
+                return;
+            }
+            
+            if (monitorAdapter === currentAttack || monitorAdapter === currentPrevention) {
+                showMessage('assignment-status', 'Cannot use same adapter for multiple roles', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/adapters/assign', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        monitor_adapter: monitorAdapter,
+                        attack_adapter: currentAttack || null,
+                        prevention_adapter: currentPrevention || null
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showMessage('assignment-status', 'Monitor adapter assigned successfully', 'success');
+                    loadAdapters();
+                } else {
+                    showMessage('assignment-status', data.message, 'error');
+                }
+            } catch (error) {
+                showMessage('assignment-status', 'Error: ' + error.message, 'error');
+            }
+        }
+        
+        // Assign attack adapter
+        async function assignAttackAdapter() {
+            const attackAdapter = document.getElementById('attack-adapter-select').value;
+            const currentMonitor = document.getElementById('monitor-adapter-select').value;
+            const currentPrevention = document.getElementById('prevention-adapter-select').value;
+            
+            if (!attackAdapter) {
+                showMessage('assignment-status', 'Please select an attack adapter', 'error');
+                return;
+            }
+            
+            if (attackAdapter === currentMonitor || attackAdapter === currentPrevention) {
+                showMessage('assignment-status', 'Cannot use same adapter for multiple roles', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/adapters/assign', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        monitor_adapter: currentMonitor || null,
+                        attack_adapter: attackAdapter,
+                        prevention_adapter: currentPrevention || null
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showMessage('assignment-status', 'Attack adapter assigned successfully', 'success');
+                    loadAdapters();
+                } else {
+                    showMessage('assignment-status', data.message, 'error');
+                }
+            } catch (error) {
+                showMessage('assignment-status', 'Error: ' + error.message, 'error');
+            }
+        }
+        
+        // Assign prevention adapter
+        async function assignPreventionAdapter() {
+            const preventionAdapter = document.getElementById('prevention-adapter-select').value;
+            const currentMonitor = document.getElementById('monitor-adapter-select').value;
+            const currentAttack = document.getElementById('attack-adapter-select').value;
+            
+            if (!preventionAdapter) {
+                showMessage('assignment-status', 'Please select a prevention adapter', 'error');
+                return;
+            }
+            
+            if (preventionAdapter === currentMonitor || preventionAdapter === currentAttack) {
+                showMessage('assignment-status', 'Cannot use same adapter for multiple roles', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/adapters/assign', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        monitor_adapter: currentMonitor || null,
+                        attack_adapter: currentAttack || null,
+                        prevention_adapter: preventionAdapter
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showMessage('assignment-status', 'Prevention adapter assigned successfully', 'success');
+                    loadAdapters();
+                } else {
+                    showMessage('assignment-status', data.message, 'error');
+                }
+            } catch (error) {
+                showMessage('assignment-status', 'Error: ' + error.message, 'error');
+            }
+        }
+        
+        // Deassign all adapters
+        async function deassignAllAdapters() {
+            if (!confirm('Deassign all adapters?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/adapters/deassign', {
+                    method: 'POST'
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showMessage('assignment-status', 'All adapters deassigned', 'success');
+                    loadAdapters();
+                } else {
+                    showMessage('assignment-status', data.message, 'error');
+                }
+            } catch (error) {
+                showMessage('assignment-status', 'Error: ' + error.message, 'error');
+            }
+        }
+        
+        function showMessage(elementId, message, type) {
+            const element = document.getElementById(elementId);
+            element.textContent = message;
+            element.className = `status-message ${type}`;
+            setTimeout(() => {
+                element.textContent = '';
+                element.className = 'status-message';
+            }, 3000);
+        }
+        
+        // Load interfaces (for old monitoring interface select - kept for compatibility)
+        async function loadInterfaces() {
+            try {
+                const response = await fetch('/api/adapter/status');
+                const status = await response.json();
+                
+                // Update adapter status display
+                if (status.current_interface) {
+                    const mode = status.current_interface.monitor_mode ? 'Monitor Mode' : 'Managed Mode';
+                    document.getElementById('adapter-mode').textContent = mode;
+                    document.getElementById('adapter-interface').textContent = status.current_interface.interface || '-';
+                    
+                    const modeBadge = document.getElementById('mode-badge');
+                    if (status.current_interface.monitor_mode) {
+                        modeBadge.textContent = '● Active';
+                        modeBadge.className = 'status-badge-small active';
+                    } else {
+                        modeBadge.textContent = '○ Inactive';
+                        modeBadge.className = 'status-badge-small inactive';
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading interfaces:', error);
+            }
+        }
+
+        // Assign adapter buttons
+        document.getElementById('assign-monitor-btn').addEventListener('click', assignMonitorAdapter);
+        document.getElementById('assign-attack-btn').addEventListener('click', assignAttackAdapter);
+        document.getElementById('assign-prevention-btn').addEventListener('click', assignPreventionAdapter);
+        document.getElementById('deassign-all-btn').addEventListener('click', deassignAllAdapters);
+        
+        // Start monitoring (uses assigned monitor adapter)
+        document.getElementById('start-monitoring-btn').addEventListener('click', async () => {
+            // Get assigned monitor adapter
+            const response = await fetch('/api/adapters');
+            const data = await response.json();
+            
+            if (!data.monitor_adapter) {
+                alert('Please assign a monitor adapter first');
+                return;
+            }
+            
+            try {
+                const startResponse = await fetch('/api/adapter/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({interface: data.monitor_adapter})
+                });
+                const startData = await startResponse.json();
+                
+                if (startData.success) {
+                    showMessage('assignment-status', 'Monitoring started successfully', 'success');
+                    loadInterfaces();
+                    setTimeout(() => {
+                        fetch('/api/status').then(r => r.json()).then(s => {
+                            fetch('/api/adapter/status').then(r => r.json()).then(a => {
+                                updateStatus(s, a);
+                            });
+                        });
+                    }, 1000);
+                } else {
+                    showMessage('assignment-status', 'Error: ' + startData.message, 'error');
+                }
+            } catch (error) {
+                showMessage('assignment-status', 'Error: ' + error.message, 'error');
+            }
+        });
+
+        // Stop monitoring
+        document.getElementById('stop-monitoring-btn').addEventListener('click', async () => {
+            if (!confirm('Stop monitoring and disable monitor mode?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/adapter/stop', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('Monitoring stopped successfully');
+                    loadInterfaces();
+                    setTimeout(() => {
+                        fetch('/api/status').then(r => r.json()).then(s => {
+                            fetch('/api/adapter/status').then(r => r.json()).then(a => {
+                                updateStatus(s, a);
+                            });
+                        });
+                    }, 1000);
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            } catch (error) {
+                alert('Error stopping monitoring: ' + error.message);
+            }
+        });
+
+        // Prevention control
+        document.getElementById('prevention-btn').addEventListener('click', async () => {
+            const endpoint = preventionEnabled ? '/api/prevention/disable' : '/api/prevention/enable';
+            const action = preventionEnabled ? 'Disable' : 'Enable';
+            
+            try {
+                const response = await fetch(endpoint, { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.status === 'enabled' || data.status === 'disabled') {
+                    preventionEnabled = !preventionEnabled;
+                    document.getElementById('prevention-btn').textContent = 
+                        preventionEnabled ? 'Disable Prevention' : 'Enable Prevention';
+                    document.getElementById('prevention-btn').className = 
+                        preventionEnabled ? 'btn btn-danger' : 'btn btn-secondary';
+                }
+            } catch (error) {
+                console.error('Error toggling prevention:', error);
+            }
+        });
+
+        // Refresh button
+        document.getElementById('refresh-btn').addEventListener('click', () => {
+            loadDevices();
+            fetch('/api/alerts?limit=10')
+                .then(r => r.json())
+                .then(displayAlerts);
+        });
+        
+        // Stop all attacks button
+        document.getElementById('stop-all-attacks-btn').addEventListener('click', async () => {
+            if (!confirm('Stop all active attacks?')) {
+                return;
+            }
+            try {
+                const response = await fetch('/api/attack/stop-all', {method: 'POST'});
+                const data = await response.json();
+                if (data.success) {
+                    alert('All attacks stopped');
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        });
+        
+        // Reset button
+        document.getElementById('reset-btn').addEventListener('click', async () => {
+            if (!confirm('Reset system? This will:\n- Stop all attacks\n- Stop monitoring\n- Deassign all adapters\n- Restore all interfaces to managed mode\n\nContinue?')) {
+                return;
+            }
+            try {
+                const response = await fetch('/api/reset', {method: 'POST'});
+                const data = await response.json();
+                if (data.success) {
+                    alert('System reset completed. Page will reload.');
+                    location.reload();
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        });
+
+        // WebSocket event handlers
+        socket.on('connect', () => {
+            console.log('✅ Connected to WiFi IDPS WebSocket');
+            // Request initial data on connect
+            loadInitialData();
+        });
+
+        socket.on('disconnect', () => {
+            console.warn('❌ Disconnected from WiFi IDPS WebSocket');
+        });
+
+        socket.on('connect_error', (error) => {
+            console.error('❌ WebSocket connection error:', error);
+        });
+
+        socket.on('update', (data) => {
+            console.log('📡 WebSocket update received:', {
+                hasStatus: !!data.status,
+                hasAlerts: !!data.alerts,
+                alertCount: data.alerts ? data.alerts.length : 0,
+                hasSummary: !!data.summary,
+                hasStatistics: !!data.statistics,
+                statCount: data.statistics ? data.statistics.length : 0
+            });
+            
+            try {
+                // Update status
+                if (data.status) {
+                    updateStatus(data.status, data.adapter_status || {});
+                }
+                
+                // Update statistics
+                updateStats(data);
+                
+                // Update alerts
+                if (data.alerts && Array.isArray(data.alerts)) {
+                    displayAlerts(data.alerts);
+                } else if (data.alerts === null || data.alerts === undefined) {
+                    // No alerts - show empty state
+                    displayAlerts([]);
+                }
+            } catch (error) {
+                console.error('Error processing WebSocket update:', error);
+            }
+        });
+        
+        // Load initial data function
+        async function loadInitialData() {
+            console.log('Loading initial dashboard data...');
+            try {
+                const [statusRes, adapterRes, alertsRes, summaryRes, statsRes] = await Promise.all([
+                    fetch('/api/status').catch(e => null),
+                    fetch('/api/adapter/status').catch(e => null),
+                    fetch('/api/alerts?limit=10').catch(e => null),
+                    fetch('/api/attack/logs?limit=1').catch(e => null), // Just to check if API works
+                    fetch('/api/status').catch(e => null) // For statistics
+                ]);
+                
+                if (statusRes) {
+                    const status = await statusRes.json();
+                    updateStatus(status, {});
+                }
+                
+                if (adapterRes) {
+                    const adapterStatus = await adapterRes.json();
+                    updateStatus({}, adapterStatus);
+                }
+                
+                if (alertsRes) {
+                    const alerts = await alertsRes.json();
+                    displayAlerts(Array.isArray(alerts) ? alerts : []);
+                }
+                
+                // Load summary and stats via separate API if available
+                loadStatsFromAPI();
+                
+                console.log('✅ Initial data loaded');
+            } catch (error) {
+                console.error('Error loading initial data:', error);
+            }
+        }
+        
+        // Load stats from API (fallback if WebSocket doesn't work)
+        async function loadStatsFromAPI() {
+            try {
+                // Get attack summary from alerts
+                const alertsRes = await fetch('/api/alerts?limit=100');
+                const alerts = await alertsRes.json();
+                
+                if (Array.isArray(alerts)) {
+                    // Calculate summary from alerts
+                    const summary = {
+                        'Deauthentication Attack': alerts.filter(a => a.alert_type === 'Deauthentication Attack').length,
+                        'Rogue Access Point': alerts.filter(a => a.alert_type === 'Rogue Access Point').length,
+                        'Handshake Capture': alerts.filter(a => a.alert_type === 'Handshake Capture').length
+                    };
+                    
+                    updateStats({
+                        summary: summary,
+                        alerts: alerts.slice(0, 10), // Top 10 for display
+                        statistics: []
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading stats from API:', error);
+            }
+        }
+
+        // Load alerts function
+        async function loadAlerts() {
+            try {
+                const response = await fetch('/api/alerts?limit=10');
+                const alerts = await response.json();
+                displayAlerts(alerts);
+            } catch (error) {
+                console.error('Error loading alerts:', error);
+            }
+        }
+        
+        // Initial load
+        console.log('Initializing dashboard...');
+        initCharts();
+        loadDevices();
+        loadAdapters();
+        loadInterfaces();
+        loadAlerts();  // Load initial alerts
+        
+        // Load initial status
+        Promise.all([
+            fetch('/api/status').then(r => r.json()).catch(e => ({running: false})),
+            fetch('/api/adapter/status').then(r => r.json()).catch(e => ({}))
+        ]).then(([status, adapterStatus]) => {
+            updateStatus(status, adapterStatus);
+        }).catch(err => {
+            console.error('Error loading initial status:', err);
+        });
+        
+        // Load prevention status
+        fetch('/api/prevention/status')
+            .then(r => r.json())
+            .then(data => {
+                preventionEnabled = data.enabled || false;
+                document.getElementById('prevention-btn').textContent = 
+                    preventionEnabled ? 'Disable Prevention' : 'Enable Prevention';
+                document.getElementById('prevention-btn').className = 
+                    preventionEnabled ? 'btn btn-danger' : 'btn btn-secondary';
+            })
+            .catch(err => {
+                console.error('Error loading prevention status:', err);
+            });
+
+        // Auto-refresh alerts every 3 seconds (fallback if WebSocket fails)
+        setInterval(() => {
+            loadAlerts();
+            loadStatsFromAPI();
+        }, 3000);
+        
+        // Auto-refresh devices, adapters, and interfaces every 30 seconds
+        setInterval(() => {
+            loadDevices();
+            loadAdapters();
+            loadInterfaces();
+        }, 30000);
+        
+        console.log('✅ Dashboard initialized');
+    </script>
+</body>
+</html>
+
